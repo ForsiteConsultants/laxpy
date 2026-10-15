@@ -22,20 +22,19 @@ Status: `laxpy` is in a stable condition.
 ## Installation
 
 ```{bash}
-# via pip
-pip install laxpy
-
-# via GitHub
-git clone https://github.com/brycefrank/laxpy.git
-cd laxpy
-pip install .
+# via pip, from GitHub
+pip install git+https://github.com/ForsiteConsultants/laxpy
 
 # with .laz support
-pip install "laxpy[laz]"
+pip install "laxpy[laz] @ git+https://github.com/ForsiteConsultants/laxpy"
 
-# via conda
-conda install laxpy -n <your environment> -c conda-forge
+# from a local clone
+git clone https://github.com/ForsiteConsultants/laxpy.git
+cd laxpy
+pip install .
 ```
+
+The `laxpy` packages on PyPI and conda-forge are the upstream 0.2.3 release (laspy 1.x) and do not include these changes.
 
 ## Example
 

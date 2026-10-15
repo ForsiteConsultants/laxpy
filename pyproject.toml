@@ -16,7 +16,7 @@ dependencies = ["laspy>=2.0", "shapely>=2.0", "numpy"]
 laz = ["laspy[lazrs]>=2.0"]
 
 [project.urls]
-Homepage = "https://github.com/brycefrank/laxpy"
+Homepage = "https://github.com/ForsiteConsultants/laxpy"
 
 [tool.setuptools]
 packages = ["laxpy"]
