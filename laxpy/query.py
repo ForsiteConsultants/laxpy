@@ -1,83 +1,70 @@
-# will hold functions for querying cell indices from a .las/x pair
-from laspy.file import File
-import os.path
-import ntpath
-from laxpy import file, tree
-from numpy.lib.recfunctions import append_fields
-from laxpy import file, tree, clip
-from shapely.geometry import Point, Polygon
-import numpy as np
 import copy
+import os.path
+import laspy
+import numpy as np
+import shapely
+from laxpy import file, tree
 
-class IndexedLAS(File):
+
+class IndexedLAS:
     """
-    The main interface for interacting with indexed `.las` files. An `IndexedLAS` wraps a `laspy.file.File`
-    and thereby has all of its functionality. When this class is initialized it checks if an existing `.lax` file that
-    matches the name of the input `.las` file exists in the same directory. If not such file exists please use `lasindex`
-    to create a matching `.lax` file.
+    The main interface for querying indexed `.las`/`.laz` files. On initialization the matching `.lax` file (same
+    name, same directory) is parsed once; subsequent queries read only the points of the intersecting cells. If no
+    such file exists please use `lasindex` (or `laxpy.file.init_lax`) to create it.
 
-    :param path: The path of a `.las` file to index.
+    :param path: The path of a `.las` or `.laz` file to index.
     """
     def __init__(self, path):
         self.path = path
-        self.original = True # Is this the original instantiation?
-        super().__init__(self.path)
-
-        # Copy original points memory map
-        #self.original_points = copy.copy(self.reader.data_provider._pmap)
-
-        # Check if matching `.lax` file is present.
-        parent_dir = os.path.join(os.path.abspath(os.path.join(self.filename, os.pardir)))
-        las_name = os.path.splitext(ntpath.basename(self.filename))[0]
-        self.lax_path = os.path.join(parent_dir, las_name + '.lax')
+        self.lax_path = os.path.splitext(path)[0] + '.lax'
 
         if not os.path.isfile(self.lax_path):
             raise FileNotFoundError('A matching .lax file was not found.')
 
-        # Parse the lax file and generate the tree
         self.parser = file.LAXParser(self.lax_path)
         self.tree = tree.LAXTree(self.parser)
-
-    def undo_map(self):
-        """
-        Resets the point map back to the original file.
-        """
-        super().__init__(self.path)
 
     def _query_cell(self, cell_index):
         """
         Returns the point indices of a given cell index. This is generally used internally.
-
-        :param cell_index:
-        :return:
         """
+        return self.parser.create_point_indices(cell_index)
 
-        point_indices = self.parser.create_point_indices(cell_index)
-        return point_indices
-
-    def map_polygon(self, q_polygon):
+    def _intervals(self, q_polygon):
         """
-        Sets the point mapping to the query polygon. Subsequent laspy-esque calls will therefore return only points
-        within the polygon. E.g. `my_las.x` will return only the x-values for points within the polygon, etc. This
-        modifies the object's reader point mapping in place. See `self.original_points` for a copy of the original
-        point mapping.
-
-        :param q_polygon: A shapely polygon to query.
+        :return: Sorted, merged, inclusive (start, end) point intervals of all cells intersecting `q_polygon`.
         """
-
-        if self.original == False: # Then clip has already been ran, reinstantiate.
-            self.undo_map()
-
-        point_indices = []
+        intervals = []
         for cell_index, polygon in self.tree.cell_polygons.items():
             if q_polygon.intersects(polygon):
-                point_indices.append(self.parser.create_point_indices(cell_index))
+                bounds = self.parser.cells[cell_index]
+                intervals.extend(zip(bounds[::2], bounds[1::2]))
 
+        merged = []
+        for start, end in sorted(intervals):
+            if merged and start <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        return merged
 
-        if len (point_indices) > 0:
-            point_indices = np.unique(np.concatenate(point_indices))
-            self.original = False
-            self.reader.data_provider._pmap = self.points[point_indices]
-        else:
-            import warnings
-            warnings.warn("No points were returned from the mapping.")
+    def query(self, q_polygon, exact=True):
+        """
+        Reads the points within a polygon. The source file is opened read-only and is not modified.
+
+        :param q_polygon: A shapely (Multi)Polygon to query.
+        :param exact: If True, return only points strictly inside `q_polygon`. If False, return all points of the
+            index cells that intersect `q_polygon` (a superset).
+        :return: A `laspy.LasData` holding the selected points. It has zero points if none were found.
+        """
+        with laspy.open(self.path) as reader:
+            header = copy.deepcopy(reader.header)
+            arrays = [np.empty(0, dtype=header.point_format.dtype())]
+            for start, end in self._intervals(q_polygon):
+                reader.seek(start)
+                arrays.append(reader.read_points(end - start + 1).array)
+
+        las = laspy.LasData(header, laspy.PackedPointRecord(np.concatenate(arrays), header.point_format))
+        if exact:
+            las.points = las.points[shapely.contains_xy(q_polygon, las.x, las.y)]
+        return las

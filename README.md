@@ -15,7 +15,7 @@ and size of the LiDAR file.
 
 ## Release Status
 
-Current Release: 0.2.3
+Current Release: 0.3.0
 
 Status: `laxpy` is in a stable condition.
 
@@ -30,6 +30,9 @@ git clone https://github.com/brycefrank/laxpy.git
 cd laxpy
 pip install .
 
+# with .laz support
+pip install "laxpy[laz]"
+
 # via conda
 conda install laxpy -n <your environment> -c conda-forge
 ```
@@ -38,19 +41,23 @@ conda install laxpy -n <your environment> -c conda-forge
 
 ### Clipping a Polygon
 
-`laxpy` clips a `shapely` polygon by adjusting the memory map (an internal mechanism in `laspy`) of the original reference object.
-Long story short, this is done in place in the following manner:
+`laxpy` reads only the points of the index cells that intersect a `shapely` polygon, then clips them exactly to the
+polygon. The result is a regular `laspy.LasData`; the source file is never modified.
 
 ```{python}
 from laxpy import IndexedLAS
 
-my_las = IndexedLAS('my_las.las')
-my_las.map_polygon(my_shapely_polygon)
+ix = IndexedLAS('my_las.las')  # requires my_las.lax in the same directory; .laz works too
+las = ix.query(my_shapely_polygon)
 
-# Print the points within the polygon
-print(my_las.points)
+print(las.x, las.points)
+las.write('clipped.las')
+
+# All points of the intersecting index cells, without the exact clip
+candidates = ix.query(my_shapely_polygon, exact=False)
 ```
 
-Note that an `IndexedLAS` object inherits directly from `laspy.file.File`, and all dimensions are available for querying,
-including `.x`, `.y`, etc. etc.
+The `.lax` file is parsed once when `IndexedLAS` is created, so querying many polygons against one file is cheap.
+A query with no matching points returns a `LasData` with zero points.
 
+Requires Python >= 3.11 and laspy >= 2.0. For laspy 1.x, use laxpy 0.2.3.

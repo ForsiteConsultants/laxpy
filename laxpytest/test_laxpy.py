@@ -2,11 +2,14 @@ from laxpy import *
 import unittest
 import os
 import numpy as np
+from shapely.geometry import box
 
 data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
 test_las = os.path.join(data_dir, 'test.las')
 test_lax = os.path.join(data_dir, 'test.lax')
 bad_lax = os.path.join(data_dir, 'bad_lax.lax')
+poly1 = box(405000, 3276400, 405020, 3276420)
+poly2 = box(405021, 3276421, 405041, 3276441)
 
 class LAXParserTestCase(unittest.TestCase):
     def setUp(self):
@@ -56,17 +59,29 @@ class IndexedLASTestCase(unittest.TestCase):
     def test_query_cell(self):
         self.assertEqual(len(self.test_ix_las._query_cell(14)), 67814)
 
-    def test_map_polygon(self):
-        from shapely.geometry import Polygon
-        minx, maxx, miny, maxy = (405000, 405020, 3276400, 3276420)
-        test_poly1 = Polygon([(minx, miny), (minx, maxy), (maxx, maxy), (maxx, miny)])
-        minx, maxx, miny, maxy = (minx+21, maxx+21, miny+21, maxy+21)
-        test_poly2 = Polygon([(minx, miny), (minx, maxy), (maxx, maxy), (maxx, miny)])
+    def test_query_cells(self):
+        # exact=False returns every point of the intersecting index cells
+        self.assertEqual(len(self.test_ix_las.query(poly1, exact=False).points), 140455)
+        self.assertEqual(len(self.test_ix_las.query(poly2, exact=False).points), 67814)
 
-        self.test_ix_las.map_polygon(test_poly1)
-        self.assertEqual(len(self.test_ix_las.points), 140455)
+    def test_query_exact(self):
+        import laspy, shapely
+        full = laspy.read(test_las)
+        for poly, count in ((poly1, 1258), (poly2, 1138)):
+            las = self.test_ix_las.query(poly)
+            self.assertEqual(len(las.points), count)
+            brute = full.points.array[shapely.contains_xy(poly, full.x, full.y)]
+            self.assertTrue(np.array_equal(np.sort(las.points.array), np.sort(brute)))
 
-        # And one more time for mental health, map a polygon outside of the last one
-        self.test_ix_las.map_polygon(test_poly2)
-        self.assertEqual(len(self.test_ix_las.points), 67814)
+    def test_query_empty(self):
+        las = self.test_ix_las.query(box(0, 0, 1, 1))
+        self.assertEqual(len(las.points), 0)
+        self.assertEqual(las.header.point_format.id, 1)
 
+    def test_query_leaves_source_untouched(self):
+        import hashlib
+        digest = lambda: hashlib.sha256(open(test_las, 'rb').read()).hexdigest()
+        before = digest()
+        self.test_ix_las.query(poly1)
+        self.test_ix_las.query(poly2, exact=False)
+        self.assertEqual(digest(), before)

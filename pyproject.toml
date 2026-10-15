@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laxpy"
+dynamic = ["version"]
+description = "A Python API for .lax files"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Bryce Frank", email = "bfrank70@gmail.com"}]
+requires-python = ">=3.11"
+dependencies = ["laspy>=2.0", "shapely>=2.0", "numpy"]
+
+[project.optional-dependencies]
+laz = ["laspy[lazrs]>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/brycefrank/laxpy"
+
+[tool.setuptools]
+packages = ["laxpy"]
+
+[tool.setuptools.dynamic]
+version = {attr = "laxpy.__version__"}
