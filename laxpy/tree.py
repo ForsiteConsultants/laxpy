@@ -1,4 +1,5 @@
 import numpy as np
+from functools import cached_property
 
 class LAXTree:
     """
@@ -10,7 +11,7 @@ class LAXTree:
         self.lax_parser = lax_parser
         self.max_index = np.max(list(self.lax_parser.cells.keys()))
 
-    @property
+    @cached_property
     def tree_level_sizes(self):
         """
         :return: A list of level sizes, where size describes the number of potential cells contained in a given level.
@@ -26,7 +27,7 @@ class LAXTree:
                 return(level_sizes)
             i+=1
 
-    @property
+    @cached_property
     def level_edges(self):
         """
         :return: A dictionary of level_index: (left_edge, right_edge) key, value pairs. An edge describes the index
@@ -105,7 +106,7 @@ class LAXTree:
 
         return((minx, minx+(x_width*2), miny, miny + (y_width*2)))
 
-    @property
+    @cached_property
     def cell_polygons(self):
         """
         :return: A dictionary of cell_index: polygon pairs where `polygon` is of type `shapely.geometry.Polygon`

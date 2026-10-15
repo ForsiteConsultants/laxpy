@@ -2,6 +2,7 @@ import struct
 import numpy as np
 import os
 import subprocess
+from functools import cached_property
 
 class LAXParser:
     """
@@ -35,7 +36,7 @@ class LAXParser:
         raise NotImplementedError('To be implemented.')
         pass
 
-    @property
+    @cached_property
     def cells(self):
         """
         :return: A dictionary of cell_index: [cell_intervals] key, value pairs.
@@ -62,7 +63,7 @@ class LAXParser:
     def create_point_indices(self, cell_index):
         """
         The values in the self.cells dictionary are the raw intervals. This function converts those raw intervals
-        into a set of point indices that can be passed to the `laspy.file.File` memory map.
+        into a set of point indices that can be used to index the points of the `.las` file.
 
         :param cell_index: The cell index to generate point indices for.
         :return: An `ndarray` of indices of points associated with the cell specified by `cell_index`
@@ -83,10 +84,9 @@ def init_lax(path):
     :return:
     """
     try:
-        prc = subprocess.Popen(["lasindex", "-i", path])
-        prc.communicate()
-    except:
-        raise(FileNotFoundError, "lasindex was not found on the system")
+        subprocess.run(["lasindex", "-i", path])
+    except FileNotFoundError:
+        raise FileNotFoundError("lasindex was not found on the system")
 
 
 

@@ -1,4 +1,3 @@
-laspy
-shapely
+laspy>=2.0
+shapely>=2.0
 numpy
-numba
