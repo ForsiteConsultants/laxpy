@@ -81,29 +81,34 @@ class IndexedLAS:
                 merged.append([start, end])
         return merged
 
-    def query(self, q_polygon, exact=True):
+    def query(self, q_polygon, exact=True, chunk_size=1_000_000):
         """
         Reads the points within a polygon. The source file is opened read-only and is not modified.
 
         :param q_polygon: A shapely (Multi)Polygon to query.
         :param exact: If True, return only points strictly inside `q_polygon`. If False, return all points of the
             index cells that intersect `q_polygon` (a superset).
+        :param chunk_size: Maximum number of points read at once. With `exact=True` each chunk is filtered before
+            being kept, so this bounds peak memory; with `exact=False` all candidates are kept regardless.
         :return: A `laspy.LasData` holding the selected points. It has zero points if none were found.
         """
+        if chunk_size < 1:
+            raise ValueError('chunk_size must be at least 1, not {}'.format(chunk_size))
         with laspy.open(self.path) as reader:
             header = copy.deepcopy(reader.header)
             arrays = [np.empty(0, dtype=header.point_format.dtype())]
             for start, end in self._intervals(q_polygon):
                 reader.seek(start)
-                points = reader.read_points(end - start + 1)
-                if len(points) != end - start + 1:
-                    raise ValueError('{}: expected {} points at {}, read {}'
-                                     .format(self.path, end - start + 1, start, len(points)))
-                arrays.append(points.array)
+                while start <= end:
+                    n = min(end - start + 1, chunk_size)
+                    points = reader.read_points(n)
+                    if len(points) != n:
+                        raise ValueError('{}: expected {} points at {}, read {}'.format(self.path, n, start, len(points)))
+                    if exact:
+                        points = points[shapely.contains_xy(q_polygon, points.x, points.y)]
+                    arrays.append(points.array)
+                    start += n
 
         las = laspy.LasData(header, laspy.PackedPointRecord(np.concatenate(arrays), header.point_format))
-        if exact:
-            las.points = las.points[shapely.contains_xy(q_polygon, las.x, las.y)]
-        else:
-            las.update_header()
+        las.update_header()
         return las

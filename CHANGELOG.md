@@ -1,4 +1,6 @@
 ## 0.4.0
+- Queries read candidate intervals in chunks of `query(..., chunk_size=1_000_000)` points. Exact queries filter each
+  chunk, so peak memory scales with the result rather than with all candidate points.
 - Embedded LAX indexes (LASzip special EVLR written by `lasindex -append`) are supported.
   `IndexedLAS(path, index='auto' | 'embedded' | 'sidecar')`; `'auto'` prefers the embedded index and warns if a
   sidecar also exists. A malformed embedded index raises instead of falling back to the sidecar.

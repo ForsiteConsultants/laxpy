@@ -93,6 +93,19 @@ class IndexedLASTestCase(unittest.TestCase):
             brute = full.points.array[shapely.contains_xy(poly, full.x, full.y)]
             self.assertTrue(np.array_equal(np.sort(las.points.array), np.sort(brute)))
 
+    def test_query_chunked(self):
+        expected = [self.test_ix_las.query(poly1, exact=exact) for exact in (True, False)]
+        chunked = [self.test_ix_las.query(poly1, exact=exact, chunk_size=1000) for exact in (True, False)]
+        for a, b in zip(chunked, expected):
+            self.assertTrue(np.array_equal(a.points.array, b.points.array))
+            self.assertEqual(a.header.point_count, len(b.points))
+            np.testing.assert_allclose(a.header.mins, b.header.mins)
+            np.testing.assert_allclose(a.header.maxs, b.header.maxs)
+
+    def test_query_chunk_size_invalid(self):
+        for chunk_size in (0, -1):
+            self.assertRaises(ValueError, self.test_ix_las.query, poly1, chunk_size=chunk_size)
+
     def test_query_empty(self):
         las = self.test_ix_las.query(box(0, 0, 1, 1))
         self.assertEqual(len(las.points), 0)
