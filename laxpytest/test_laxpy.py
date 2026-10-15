@@ -1,6 +1,10 @@
 from laxpy import *
 import unittest
 import os
+import shutil
+import struct
+import tempfile
+import warnings
 from pathlib import Path
 import numpy as np
 from shapely.geometry import box
@@ -101,3 +105,114 @@ class IndexedLASTestCase(unittest.TestCase):
         self.test_ix_las.query(poly1)
         self.test_ix_las.query(poly2, exact=False)
         self.assertEqual(digest(), before)
+
+
+def evlr(user_id, record_id, payload):
+    """A LASzip special EVLR record (60-byte header + payload)."""
+    return struct.pack('<H16sHQ32s', 0, user_id, record_id, len(payload), b'') + payload
+
+
+class EmbeddedLAXTestCase(unittest.TestCase):
+    """Synthetic `lasindex -append` files: test.las as LAZ with special EVLRs appended."""
+
+    @classmethod
+    def setUpClass(cls):
+        import io, laspy
+        buf = io.BytesIO()
+        laspy.read(test_las).write(buf, do_compress=True)
+        cls.base_laz = buf.getvalue()
+        cls.lax = Path(test_lax).read_bytes()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.laz = os.path.join(self.tmp.name, 'tile.laz')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_laz(self, records=None, count=None, offset=None, truncate=0, sidecar=False):
+        """Writes tile.laz with `records` appended and the LASzip VLR pointing at them."""
+        records = [evlr(b'LAStools', 30, self.lax)] if records is None else records
+        data = bytearray(self.base_laz)
+        vlr_payload = data.index(b'laszip encoded') - 2 + 54
+        struct.pack_into('<qq', data, vlr_payload + 16,
+                         len(records) if count is None else count, len(data) if offset is None else offset)
+        data += b''.join(records)
+        Path(self.laz).write_bytes(bytes(data[:len(data) - truncate]))
+        if sidecar:
+            shutil.copy(test_lax, os.path.join(self.tmp.name, 'tile.lax'))
+
+    def test_embedded_matches_sidecar(self):
+        self.write_laz()
+        self.assertEqual(file.read_embedded_lax(self.laz), self.lax)
+        embedded, sidecar = IndexedLAS(self.laz), IndexedLAS(test_las)
+        self.assertEqual(embedded.index_source, 'embedded')
+        self.assertEqual(embedded.parser.cells, sidecar.parser.cells)
+        for exact in (True, False):
+            a, b = embedded.query(poly1, exact=exact), sidecar.query(poly1, exact=exact)
+            self.assertTrue(np.array_equal(np.sort(a.points.array), np.sort(b.points.array)))
+
+    def test_index_modes(self):
+        self.write_laz(sidecar=True)
+        with self.assertWarns(UserWarning):
+            self.assertEqual(IndexedLAS(self.laz).index_source, 'embedded')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            self.assertEqual(IndexedLAS(self.laz, index='embedded').index_source, 'embedded')
+            self.assertEqual(IndexedLAS(self.laz, index='sidecar').index_source, 'sidecar')
+        with self.assertRaises(ValueError):
+            IndexedLAS(self.laz, index='other')
+
+    def test_missing_index(self):
+        self.write_laz(records=[])
+        for index in ('auto', 'embedded', 'sidecar'):
+            with self.assertRaises(FileNotFoundError):
+                IndexedLAS(self.laz, index=index)
+        self.assertRaises(FileNotFoundError, IndexedLAS, test_las, index='embedded')
+        self.write_laz(sidecar=False)
+        self.assertRaises(FileNotFoundError, IndexedLAS, self.laz, index='sidecar')
+
+    def test_unrelated_records(self):
+        self.write_laz(records=[evlr(b'other', 1, b'x' * 10), evlr(b'LAStools', 30, self.lax), evlr(b'other', 2, b'')])
+        self.assertEqual(file.read_embedded_lax(self.laz), self.lax)
+        self.write_laz(records=[evlr(b'other', 1, b'x' * 10)])
+        self.assertIsNone(file.read_embedded_lax(self.laz))
+
+    def test_unused_pointers(self):
+        self.write_laz(records=[], count=-1, offset=-1)
+        self.assertIsNone(file.read_embedded_lax(self.laz))
+        self.assertIsNone(file.read_embedded_lax(test_las))
+
+    def test_malformed_embedded_never_falls_back(self):
+        bad_signature = b'XXXX' + self.lax[4:]
+        cases = {
+            'bad offset': dict(offset=len(self.base_laz) * 2),
+            'bad count': dict(count=-5),
+            'count past chain': dict(count=2),
+            'truncated payload': dict(truncate=10),
+            'duplicate': dict(records=[evlr(b'LAStools', 30, self.lax)] * 2),
+            'bad signature': dict(records=[evlr(b'LAStools', 30, bad_signature)]),
+            'truncated cells': dict(records=[evlr(b'LAStools', 30, self.lax[:200])]),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name):
+                self.write_laz(sidecar=True, **kwargs)
+                self.assertRaises(ValueError, IndexedLAS, self.laz)
+
+    def test_out_of_range_interval(self):
+        lax = bytearray(self.lax)
+        struct.pack_into('<I', lax, 20 * 4, 10 ** 9)  # end of the first interval
+        self.write_laz(records=[evlr(b'LAStools', 30, bytes(lax))])
+        self.assertRaises(ValueError, IndexedLAS, self.laz)
+
+    def test_source_unchanged_and_index_not_propagated(self):
+        import laspy
+        self.write_laz()
+        before = Path(self.laz).read_bytes()
+        ix = IndexedLAS(self.laz)
+        out = os.path.join(self.tmp.name, 'out.laz')
+        ix.query(poly1).write(out)
+        ix.query(poly2, exact=False)
+        self.assertEqual(Path(self.laz).read_bytes(), before)
+        self.assertIsNone(file.read_embedded_lax(out))
+        self.assertEqual(len(laspy.read(out).points), 1258)

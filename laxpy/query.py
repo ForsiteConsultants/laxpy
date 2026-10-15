@@ -3,26 +3,59 @@ import os.path
 import laspy
 import numpy as np
 import shapely
+import warnings
+from pathlib import Path
 from laxpy import file, tree
 
 
 class IndexedLAS:
     """
-    The main interface for querying indexed `.las`/`.laz` files. On initialization the matching `.lax` file (same
-    name, same directory) is parsed once; subsequent queries read only the points of the intersecting cells. If no
-    such file exists please use `lasindex` (or `laxpy.file.init_lax`) to create it.
+    The main interface for querying indexed `.las`/`.laz` files. On initialization the LAX index is loaded and
+    validated once; subsequent queries read only the points of the intersecting cells.
+
+    The index is either embedded in a LAZ file (`lasindex -append`) or a sidecar `.lax` file with the same name in
+    the same directory. Use `lasindex` (or `laxpy.file.init_lax`) to create one.
 
     :param path: The path of a `.las` or `.laz` file to index.
+    :param index: Which index to use: 'embedded', 'sidecar', or 'auto' (embedded if present, else sidecar; warns
+        if both exist). A malformed embedded index raises `ValueError` and never falls back to the sidecar.
     """
-    def __init__(self, path):
+    def __init__(self, path, index='auto'):
+        if index not in ('auto', 'embedded', 'sidecar'):
+            raise ValueError("index must be 'auto', 'embedded' or 'sidecar', not {!r}".format(index))
         self.path = path
         self.lax_path = os.path.splitext(path)[0] + '.lax'
+        has_sidecar = os.path.isfile(self.lax_path)
 
-        if not os.path.isfile(self.lax_path):
-            raise FileNotFoundError('A matching .lax file was not found.')
+        embedded = None if index == 'sidecar' else file.read_embedded_lax(path)
+        match index, embedded, has_sidecar:
+            case 'auto' | 'embedded', bytes(), _:
+                self.index_source, payload = 'embedded', embedded
+            case 'auto' | 'sidecar', None, True:
+                self.index_source, payload = 'sidecar', Path(self.lax_path).read_bytes()
+            case 'embedded', None, _:
+                raise FileNotFoundError('No embedded LAX index found in {}.'.format(path))
+            case 'sidecar', _, False:
+                raise FileNotFoundError('A matching .lax file was not found: {}'.format(self.lax_path))
+            case 'auto', None, False:
+                raise FileNotFoundError('No embedded LAX index or matching .lax file found for {}.'.format(path))
 
-        self.parser = file.LAXParser(self.lax_path)
+        try:
+            self.parser = file.LAXParser(payload)
+            self.parser.cells
+        except ValueError as e:
+            raise ValueError('{} index of {}: {}'.format(self.index_source.capitalize(), path, e)) from e
         self.tree = tree.LAXTree(self.parser)
+
+        with laspy.open(path) as reader:
+            point_count = reader.header.point_count
+        bounds = np.array([b for cell in self.parser.cells.values() for b in cell]).reshape(-1, 2)
+        if (bounds[:, 0] > bounds[:, 1]).any() or (bounds >= point_count).any():
+            raise ValueError('{} index of {} references points outside 0..{}; it may be stale.'
+                             .format(self.index_source.capitalize(), path, point_count - 1))
+
+        if self.index_source == 'embedded' and index == 'auto' and has_sidecar:
+            warnings.warn('{} has both an embedded index and {}; using the embedded index.'.format(path, self.lax_path))
 
     def _query_cell(self, cell_index):
         """
@@ -62,7 +95,11 @@ class IndexedLAS:
             arrays = [np.empty(0, dtype=header.point_format.dtype())]
             for start, end in self._intervals(q_polygon):
                 reader.seek(start)
-                arrays.append(reader.read_points(end - start + 1).array)
+                points = reader.read_points(end - start + 1)
+                if len(points) != end - start + 1:
+                    raise ValueError('{}: expected {} points at {}, read {}'
+                                     .format(self.path, end - start + 1, start, len(points)))
+                arrays.append(points.array)
 
         las = laspy.LasData(header, laspy.PackedPointRecord(np.concatenate(arrays), header.point_format))
         if exact:

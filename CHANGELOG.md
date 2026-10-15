@@ -1,4 +1,10 @@
-## Unreleased
+## 0.4.0
+- Embedded LAX indexes (LASzip special EVLR written by `lasindex -append`) are supported.
+  `IndexedLAS(path, index='auto' | 'embedded' | 'sidecar')`; `'auto'` prefers the embedded index and warns if a
+  sidecar also exists. A malformed embedded index raises instead of falling back to the sidecar.
+- LAX indexes are validated: block signatures, truncation, and point intervals against the file's point count
+  (catches indexes that are stale because the file now has fewer points). Short reads raise `ValueError`.
+- `LAXParser` accepts the LAX payload as bytes as well as a path; new `file.read_embedded_lax(path)`.
 - Fixed: `query(..., exact=False)` returned a header (point count, bounds, return counts) describing the source file
   instead of the returned points.
 
