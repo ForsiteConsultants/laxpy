@@ -1,6 +1,7 @@
 from laxpy import *
 import unittest
 import os
+from pathlib import Path
 import numpy as np
 from shapely.geometry import box
 
@@ -64,6 +65,21 @@ class IndexedLASTestCase(unittest.TestCase):
         self.assertEqual(len(self.test_ix_las.query(poly1, exact=False).points), 140455)
         self.assertEqual(len(self.test_ix_las.query(poly2, exact=False).points), 67814)
 
+    def test_query_cells_header(self):
+        # Header must describe the returned subset before any write
+        las = self.test_ix_las.query(poly1, exact=False)
+        self.assertLess(len(las.points), 217222)
+        self.assertEqual(las.header.point_count, len(las.points))
+        np.testing.assert_allclose(las.header.mins, [las.x.min(), las.y.min(), las.z.min()])
+        np.testing.assert_allclose(las.header.maxs, [las.x.max(), las.y.max(), las.z.max()])
+        by_return = np.bincount(las.return_number, minlength=16)[1:16]
+        np.testing.assert_array_equal(las.header.number_of_points_by_return, by_return)
+
+    def test_query_cells_empty(self):
+        las = self.test_ix_las.query(box(0, 0, 1, 1), exact=False)
+        self.assertEqual(len(las.points), 0)
+        self.assertEqual(las.header.point_count, 0)
+
     def test_query_exact(self):
         import laspy, shapely
         full = laspy.read(test_las)
@@ -80,7 +96,7 @@ class IndexedLASTestCase(unittest.TestCase):
 
     def test_query_leaves_source_untouched(self):
         import hashlib
-        digest = lambda: hashlib.sha256(open(test_las, 'rb').read()).hexdigest()
+        digest = lambda: hashlib.sha256(Path(test_las).read_bytes()).hexdigest()
         before = digest()
         self.test_ix_las.query(poly1)
         self.test_ix_las.query(poly2, exact=False)

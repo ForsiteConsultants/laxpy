@@ -1,3 +1,7 @@
+## Unreleased
+- Fixed: `query(..., exact=False)` returned a header (point count, bounds, return counts) describing the source file
+  instead of the returned points.
+
 ## 0.3.0
 - Ported to laspy 2.x; laspy 1.x is no longer supported (use 0.2.3 with laspy 1.x).
 - Breaking: `IndexedLAS` no longer subclasses `laspy.file.File`. `map_polygon`/`undo_map` are replaced by

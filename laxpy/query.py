@@ -67,4 +67,6 @@ class IndexedLAS:
         las = laspy.LasData(header, laspy.PackedPointRecord(np.concatenate(arrays), header.point_format))
         if exact:
             las.points = las.points[shapely.contains_xy(q_polygon, las.x, las.y)]
+        else:
+            las.update_header()
         return las
